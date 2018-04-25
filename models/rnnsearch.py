@@ -107,9 +107,10 @@ class MultiAttention(nn.Module):
         self.att = Attention(q_size, k_size)
         #self.att_cnn4weight = AttCNN4Weight(q_size, k_size, v_size, kernel_width = 3)
         self.att_cnn4all= AttCNN4All(q_size, k_size, v_size, kernel_width = 3)
+        self.layer_norm = Layer_Norm(v_size)
 
     def combine_attend(self, attend_1, attend_2):
-        return attend_1 + attend_2
+        return self.layer_norm(attend_1 + attend_2)
 
     def forward(self, q, k, v, k_mask=None):
         _, _, _, e_ij_1, attend_1 = self.att(s_tm1=1, xs_h=v, uh=k, k_mask)
