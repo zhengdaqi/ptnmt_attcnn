@@ -116,7 +116,7 @@ class MultiAttention(nn.Module):
     def forward(self, q, k, v, k_mask=None):
         _, _, _, e_ij_1, attend_1 = self.att(s_tm1=q, xs_h=v, uh=k, xs_mask=k_mask)
         #_, _, _, e_ij_2, attend_2 = self.att_cnn4weight(q, k, v, k_mask)
-        _, _, _, e_ij_3, attend_3 = self.att_cnn4all(q, k, v, k_mask)
+        _, _, _, e_ij_3, attend_3 = self.att_cnn4all(q, v, v, k_mask) #FIXME: here use v only
         combined = self.combine_attend(attend_1, attend_3)
         #return None, None, None, None, combined
         return None, None, None, e_ij_1, combined
@@ -157,7 +157,8 @@ class AttCNN4Weight(nn.Module):
         kernel = self.q_to_kernel(q).view(batch_size, k_size, self.kernel_width)
         conv_res = F.conv1d(inp, kernel, groups=batch_size, padding=self.padding_width) # 1 * batch_size * kv_len
         a_ij = conv_res.view(batch_size, kv_len).t() # kv_len * batch_size
-        e_ij = self.maskSoftmax(a_ij, mask=k_mask, dim=0) # kv_len * batch_size
+        kv_mask = k_mask[:,:,None] if k_mask is not None else k_mask
+        e_ij = self.maskSoftmax(a_ij, mask=kv_mask, dim=0) # kv_len * batch_size
 
         attend = (e_ij[:, :, None] * v).sum(0)
         return  None, None, a_ij, e_ij, attend
@@ -200,9 +201,10 @@ class AttCNN4All(nn.Module):
         # 1 * (batch_size * v_size) * kv_len
         conv_res = F.conv1d(inp, kernel, groups=batch_size, padding=self.padding_width)
         a_ij = conv_res.view(batch_size, v_size, kv_len).permute(2, 0, 1) # kv_len * batch_size * v_size
-        e_ij = self.maskSoftmax(a_ij, mask=k_mask, dim=0) # kv_len * batch_size * v_size
+        kv_mask = k_mask[:,:,None] if k_mask is not None else k_mask
+        e_ij = self.maskSoftmax(a_ij, mask=kv_mask) # kv_len * batch_size * v_size
 
-        self.do_directly_output_attend = True
+        self.do_directly_output_attend = False
         if self.do_directly_output_attend:
             attend, _ = a_ij.max(dim = 0)
         else: # weight dot v
@@ -274,7 +276,7 @@ class Decoder(nn.Module):
         s_above = self.gru1(y_tm1, y_mask, s_tm1)
         # alpha_ij: (slen, batch_size), attend: (batch_size, enc_hid_size)
         _check_tanh_sa, _check_a1_weight, _check_a1, alpha_ij, attend \
-                = self.attention(q = s_above, v = xs_h, k = xs_h, k_mask=xs_mask)
+                = self.attention(q = s_above, v = xs_h, k = uh, k_mask=xs_mask)
                 #= self.attention(s_above, xs_h, uh, xs_mask)
 
         s_t = self.gru2(attend, y_mask, s_above)
