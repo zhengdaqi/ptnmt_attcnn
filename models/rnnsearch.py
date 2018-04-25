@@ -110,14 +110,16 @@ class MultiAttention(nn.Module):
         self.layer_norm = Layer_Norm(v_size)
 
     def combine_attend(self, attend_1, attend_2):
-        return self.layer_norm(attend_1 + attend_2)
+        combined = attend_1 + attend_2
+        return self.layer_norm(combined)
 
     def forward(self, q, k, v, k_mask=None):
-        _, _, _, e_ij_1, attend_1 = self.att(s_tm1=1, xs_h=v, uh=k, k_mask)
-        #_, _, _, e_ij_2, attend_2 = self.attcnn4weight(q, k, v, k_mask)
-        _, _, _, e_ij_3, attend_3 = self.attcnn4all(q, k, v, k_mask)
-        attend = self.combine_attend(attend_1, attend_3)
-        return None, None, None, None, None, attend
+        _, _, _, e_ij_1, attend_1 = self.att(s_tm1=q, xs_h=v, uh=k, xs_mask=k_mask)
+        #_, _, _, e_ij_2, attend_2 = self.att_cnn4weight(q, k, v, k_mask)
+        _, _, _, e_ij_3, attend_3 = self.att_cnn4all(q, k, v, k_mask)
+        combined = self.combine_attend(attend_1, attend_3)
+        #return None, None, None, None, combined
+        return None, None, None, e_ij_1, combined
 
 class AttCNN4Weight(nn.Module):
 
@@ -173,6 +175,7 @@ class AttCNN4All(nn.Module):
         # batch_size * q_size -> batch_size * k_size * kernel_width
         self.q_to_kernel = nn.Linear(q_size, v_size * k_size * self.kernel_width, bias=True)
         #nn.init.xavier_normal(self.q_to_kernel.weight)
+        self.maskSoftmax = MaskSoftmax()
 
     def forward(self, q, k, v, k_mask=None):
 
@@ -199,8 +202,9 @@ class AttCNN4All(nn.Module):
         a_ij = conv_res.view(batch_size, v_size, kv_len).permute(2, 0, 1) # kv_len * batch_size * v_size
         e_ij = self.maskSoftmax(a_ij, mask=k_mask, dim=0) # kv_len * batch_size * v_size
 
-        if True:
-            attend = a_ij.max_pooling(dim = 0)
+        self.do_directly_output_attend = True
+        if self.do_directly_output_attend:
+            attend, _ = a_ij.max(dim = 0)
         else: # weight dot v
             attend = (e_ij * v).sum(0)
 
