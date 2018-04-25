@@ -44,13 +44,11 @@ class NMT(nn.Module):
         uh = self.ha(xs)
         return s0, xs, uh
 
-    def forward(self, srcs, trgs, srcs_m, trgs_m, isAtt=False, test=False,
-                ss_eps=1., oracles=None):
+    def forward(self, srcs, trgs, srcs_m, trgs_m, isAtt=False, test=False):
         # (max_slen_batch, batch_size, enc_hid_size)
         s0, srcs, uh = self.init(srcs, srcs_m, test)
 
-        return self.decoder(s0, srcs, trgs, uh, srcs_m, trgs_m,
-                            isAtt=isAtt, ss_eps=ss_eps, oracles=oracles)
+        return self.decoder(s0, srcs, trgs, uh, srcs_m, trgs_m, isAtt=isAtt)
 
 class Encoder(nn.Module):
 
@@ -233,7 +231,7 @@ class Decoder(nn.Module):
 
         return attend, s_t, y_tm1, alpha_ij, _check_tanh_sa, _check_a1_weight, _check_a1
 
-    def forward(self, s_tm1, xs_h, ys, uh, xs_mask, ys_mask, isAtt=False, ss_eps=1., oracles=None):
+    def forward(self, s_tm1, xs_h, ys, uh, xs_mask, ys_mask, isAtt=False):
 
         tlen_batch_s, tlen_batch_y, tlen_batch_c = [], [], []
         _checks = []
