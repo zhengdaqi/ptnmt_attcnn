@@ -39,16 +39,16 @@ class NMT(nn.Module):
             if wargs.gpu_id and not xs.is_cuda: xs = xs.cuda()
             xs = Variable(xs, requires_grad=False, volatile=True)
 
-        xs = self.encoder(xs, xs_mask)
-        s0 = self.init_state(xs, xs_mask)
-        uh = self.ha(xs)
-        return s0, xs, uh
+        xs_emb, xs_enc = self.encoder(xs, xs_mask)
+        s0 = self.init_state(xs_enc, xs_mask)
+        uh = self.ha(xs_enc)
+        return s0, xs_emb, xs_enc, uh
 
     def forward(self, srcs, trgs, srcs_m, trgs_m, isAtt=False, test=False):
         # (max_slen_batch, batch_size, enc_hid_size)
-        s0, srcs, uh = self.init(srcs, srcs_m, test)
+        s0, src_emb, src_enc, uh = self.init(srcs, srcs_m, test)
 
-        return self.decoder(s0, srcs, trgs, uh, srcs_m, trgs_m, isAtt=isAtt)
+        return self.decoder(s0, src_emb, src_enc, trgs, uh, srcs_m, trgs_m, isAtt=isAtt)
 
 class Encoder(nn.Module):
 
@@ -93,7 +93,33 @@ class Encoder(nn.Module):
             h = self.back_gru(right[k], xs_mask[k] if xs_mask is not None else None, h)
             left.append(h)
 
-        return tc.stack(left[::-1], dim=0)
+        return xs_e, tc.stack(left[::-1], dim=0)
+
+class MixAttention(nn.Module):
+
+    def __init__(self, q1_size, k1_size, v1_size, q2_size, k2_size, v2_size):
+
+        super(MixAttention, self).__init__()
+        self.q1_size, self.k1_size, self.v1_size = q1_size, k1_size, v1_size
+        self.q2_size, self.k2_size, self.v2_size = q2_size, k2_size, v2_size
+
+        self.att = Attention(q1_size, k1_size)
+        self.att_cnn4weight = AttCNN4Weight(q2_size, k2_size, v2_size, kernel_width = 3)
+        #self.att_cnn4all= AttCNN4All(q_size, k_size, v_size, kernel_width = 3)
+        self.layer_norm = Layer_Norm(v1_size) # FIXME: keep v1 == v2 ?
+
+    def combine_attend(self, attend_1, attend_2):
+        combined = attend_1 + attend_2
+        return self.layer_norm(combined)
+
+    def forward(self, q1, k1, v1, q2, k2, v2, k_mask=None):
+        _, _, _, e_ij_1, attend_1 = self.att(s_tm1=q1, xs_h=v1, uh=k1, xs_mask=k_mask)
+        _, _, _, e_ij_2, attend_2 = self.att_cnn4weight(q=q2, k=k2, v=v2, k_mask=k_mask)
+        #_, _, _, e_ij_3, attend_3 = self.att_cnn4all(q=q2, k=k2, v=v2, k_mask=k_mask) #FIXME: here use v only
+        combined = self.combine_attend(attend_1, attend_2)
+        #return None, None, None, None, combined
+        return None, None, None, e_ij_1, combined
+
 
 class MultiAttention(nn.Module):
 
@@ -243,7 +269,14 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
 
         self.max_out = max_out
-        self.attention = MultiAttention(q_size = wargs.dec_hid_size, k_size = wargs.align_size, v_size = wargs.dec_hid_size)
+        self.attention = MixAttention(
+                                      q1_size = wargs.dec_hid_size,
+                                      k1_size = wargs.align_size,
+                                      v1_size = wargs.dec_hid_size,
+                                      q2_size = wargs.trg_wemb_size,
+                                      k2_size = wargs.src_wemb_size,
+                                      v2_size = wargs.src_wemb_size
+                                      )
         self.trg_lookup_table = nn.Embedding(trg_vocab_size, wargs.trg_wemb_size, padding_idx=PAD)
         self.tanh = nn.Tanh()
         self.sigmoid = nn.Sigmoid()
@@ -260,7 +293,7 @@ class Decoder(nn.Module):
         self.classifier = Classifier(wargs.out_size, trg_vocab_size,
                                      self.trg_lookup_table if wargs.copy_trg_emb is True else None)
 
-    def step(self, s_tm1, xs_h, uh, y_tm1, xs_mask=None, y_mask=None):
+    def step(self, s_tm1, src_emb, xs_h, uh, y_tm1, xs_mask=None, y_mask=None):
 
         if not isinstance(y_tm1, Variable):
             if isinstance(y_tm1, int): y_tm1 = tc.Tensor([y_tm1]).long()
@@ -276,14 +309,17 @@ class Decoder(nn.Module):
         s_above = self.gru1(y_tm1, y_mask, s_tm1)
         # alpha_ij: (slen, batch_size), attend: (batch_size, enc_hid_size)
         _check_tanh_sa, _check_a1_weight, _check_a1, alpha_ij, attend \
-                = self.attention(q = s_above, v = xs_h, k = uh, k_mask=xs_mask)
+                = self.attention(q1 = s_above, v1 = xs_h, k1 = uh,
+                                 q2 = y_tm1, v2 = src_emb, k2 = src_emb,
+                                 k_mask=xs_mask)
+                #= self.attention(q = s_above, v = xs_h, k = uh, k_mask=xs_mask)
                 #= self.attention(s_above, xs_h, uh, xs_mask)
 
         s_t = self.gru2(attend, y_mask, s_above)
 
         return attend, s_t, y_tm1, alpha_ij, _check_tanh_sa, _check_a1_weight, _check_a1
 
-    def forward(self, s_tm1, xs_h, ys, uh, xs_mask, ys_mask, isAtt=False):
+    def forward(self, s_tm1, src_emb, xs_h, ys, uh, xs_mask, ys_mask, isAtt=False):
 
         tlen_batch_s, tlen_batch_y, tlen_batch_c = [], [], []
         _checks = []
@@ -300,7 +336,7 @@ class Decoder(nn.Module):
             y_tm1 = ys_e[k]
 
             attend, s_tm1, _, alpha_ij, _c1, _c2, _c3 = \
-                    self.step(s_tm1, xs_h, uh, y_tm1, xs_mask, ys_mask[k])
+                    self.step(s_tm1, src_emb, xs_h, uh, y_tm1, xs_mask, ys_mask[k])
             logit = self.step_out(s_tm1, y_tm1, attend)
 
             sent_logit.append(logit)
