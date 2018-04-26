@@ -71,6 +71,43 @@ class Transformer(nn.Module):
 
         return dec_output
 
+class BatchConv1d(nn.Module):
+
+    def __init__(self, q_size, k_size, kernel_width = 3):
+
+        super(BatchConv1d, self).__init__()
+        self.q_size = q_size
+        self.k_size = k_size
+        self.kernel_width = kernel_width
+        self.padding_width = (self.kernel_width - 1) / 2
+        # (batch_size * q_len) * q_size -> (batch_size * q_len) * k_size * kernel_width
+        self.q_to_kernel = nn.Linear(q_size, k_size * self.kernel_width, bias=True)
+        #nn.init.xavier_normal(self.q_to_kernel.weight)
+
+    def forward(self, q, k):
+
+        batch_size, q_len, q_size = q.size()
+        batch_size, k_len, k_size = k.size()
+
+        # conv1d(input, weight)
+        #### original parameter dimensions ####
+        # input.size = batch_size * in_channels * input_width
+        # weight.size = out_channels * in_channels * kernel_width
+        # output.size = batch_size * out_channels * output_width
+        #### use groups to make every sentence in batch should have its own kernel #####
+        # groups = batch_size
+        # input.size = 1 * (batch_size * k_size) * kv_len
+        # weight.size = batch_size *  k_size * kernel_width
+        # output.size = 1 * batch_size * kv_len
+        # B, L, nhid -> B, nhid, L
+        inp = k.permute(0, 2, 1).contiguous().view(1, batch_size * k_size, k_len)
+        q_flat = q.view(batch_size * q_len, q_size)
+        kernel = self.q_to_kernel(q_flat).view(batch_size * q_len, k_size, self.kernel_width)
+        conv_res = F.conv1d(inp, kernel, groups=batch_size, padding=self.padding_width) # 1 * batch_size * k_len
+        a_ij = conv_res.view(batch_size, q_len, k_len) # kv_len * batch_size
+
+        return a_ij
+
 class MultiHeadAttention(nn.Module):
     '''
         Multi-Head Attention module from <Attention is All You Need>
@@ -99,6 +136,7 @@ class MultiHeadAttention(nn.Module):
         self.layer_norm = Layer_Norm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.temper = np.power(d_model, 0.5)
+        self.bconv1d = BatchConv1d(d_k, d_k, kernel_width=3)
 
         #self.proj = nn.Linear(n_head*d_v, d_model)
         self.proj = XavierLinear(n_head*d_v, d_model)
@@ -127,7 +165,8 @@ class MultiHeadAttention(nn.Module):
         v_s = tc.bmm(v_s, self.w_v).view(-1, L_v, self.d_v) # (B*n_head, L_v, d_v)
 
         # (B*n_head, trg_L, src_L)
-        attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
+        #attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
+        attn = self.bconv1d(q_s, k_s) / self.temper
 
         if attn_mask is not None:   # (B, L_q, L_k)
             attn_mask = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
