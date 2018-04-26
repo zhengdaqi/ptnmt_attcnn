@@ -195,14 +195,14 @@ beta_cover_penalty = 0.
 Starting learning rate. If adagrad/adadelta/adam is used, then this is the global learning rate.
 Recommended settings: sgd = 1, adagrad = 0.1, adadelta = 1, adam = 0.001
 '''
-opt_mode = 'adadelta'
-learning_rate = 1.0
-rho = 0.95
+#opt_mode = 'adadelta'
+#learning_rate = 1.0
+#rho = 0.95
 
-#opt_mode = 'adam'
-#learning_rate = 1e-3
-#beta_1 = 0.9
-#beta_2 = 0.98
+opt_mode = 'adam'
+learning_rate = 1e-3
+beta_1 = 0.9
+beta_2 = 0.98
 
 #opt_mode = 'sgd'
 #learning_rate = 1.
@@ -221,7 +221,7 @@ segments = False
 seg_val_tst_dir = 'orule_1.7'
 
 # 0: groundhog, 1: rnnsearch
-model = 1
+model = 8 # 8 for transfomer
 
 # convolutional layer
 #fltr_windows = [1, 3, 5]   # windows size
@@ -237,7 +237,7 @@ print_att = True
 #self_norm_alpha = 0.5
 self_norm_alpha = None
 #dec_gpu_id = None
-gpu_id = [0]
+gpu_id = [3]
 #gpu_id = None
 
 # Transfomer
@@ -252,4 +252,6 @@ n_layers=1
 n_head=8
 warmup_steps=8000
 
+with_batch=1
+ori_search=0
 

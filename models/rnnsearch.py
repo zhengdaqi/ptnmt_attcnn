@@ -95,30 +95,52 @@ class Encoder(nn.Module):
 
         return tc.stack(left[::-1], dim=0)
 
-class AttentionConv(nn.Module):
+class MultiAttention(nn.Module):
 
-    def __init__(self, dec_hid_size, align_size):
+    def __init__(self, q_size, k_size, v_size):
 
-        super(AttentionConv, self).__init__()
-        self.align_size = align_size
-        self.kernel_width = 3
+        super(MultiAttention, self).__init__()
+        self.q_size = q_size
+        self.k_size = k_size
+        self.v_size = v_size
+
+        self.att = Attention(q_size, k_size)
+        #self.att_cnn4weight = AttCNN4Weight(q_size, k_size, v_size, kernel_width = 3)
+        self.att_cnn4all= AttCNN4All(q_size, k_size, v_size, kernel_width = 3)
+        self.layer_norm = Layer_Norm(v_size)
+
+    def combine_attend(self, attend_1, attend_2):
+        combined = attend_1 + attend_2
+        return self.layer_norm(combined)
+
+    def forward(self, q, k, v, k_mask=None):
+        _, _, _, e_ij_1, attend_1 = self.att(s_tm1=q, xs_h=v, uh=k, xs_mask=k_mask)
+        #_, _, _, e_ij_2, attend_2 = self.att_cnn4weight(q, k, v, k_mask)
+        _, _, _, e_ij_3, attend_3 = self.att_cnn4all(q, v, v, k_mask) #FIXME: here use v only
+        combined = self.combine_attend(attend_1, attend_3)
+        #return None, None, None, None, combined
+        return None, None, None, e_ij_1, combined
+
+class AttCNN4Weight(nn.Module):
+
+    def __init__(self, q_size, k_size, v_size, kernel_width = 3):
+
+        super(AttCNN4Weight, self).__init__()
+        self.q_size = q_size
+        self.k_size = k_size
+        self.v_size = v_size
+        self.kernel_width = kernel_width
         self.padding_width = (self.kernel_width - 1) / 2
-        # batch_size * hid_size -> batch_size * hid_size * kernel_width
-        self.state_to_kernel = nn.Linear(dec_hid_size, dec_hid_size * self.kernel_width, bias=True)
-        nn.init.xavier_normal(self.state_to_kernel.weight)
-        #self.sa = nn.Linear(dec_hid_size, self.align_size)
-        #self.tanh = nn.Tanh()
-        #self.conv_weight = nn.Parameter(tc.zeros(dec_hid_size, align_size, self.kernel_width))
-        #self.conv_bias = nn.Parameter(tc.zeros(dec_hid_size))
-        #nn.init.xavier_normal(self.conv_weight)
-        #nn.init.xavier_normal(self.conv_bias)
+        # batch_size * q_size -> batch_size * k_size * kernel_width
+        self.q_to_kernel = nn.Linear(q_size, k_size * self.kernel_width, bias=True)
+        #nn.init.xavier_normal(self.q_to_kernel.weight)
         self.maskSoftmax = MaskSoftmax()
 
-    def forward(self, s_tm1, xs_h, uh, xs_mask=None):
+    def forward(self, q, k, v, k_mask=None):
 
-        sent_len, batch_size, hid_size = xs_h.size()
-        sent_len, batch_size, align_size = uh.size()
-        # s_tm1.size = batch_size * hid_size
+        kv_len, batch_size, k_size = k.size()
+        # kv_len, batch_size, v_size = v.size()
+        # q.size = batch_size * q_size
 
         # conv1d(input, weight)
         #### original parameter dimensions ####
@@ -126,40 +148,69 @@ class AttentionConv(nn.Module):
         # weight.size = out_channels * in_channels * kernel_width
         # output.size = batch_size * out_channels * output_width
         #### use groups to make every sentence in batch should have its own kernel #####
-        # input.size = 1 * (batch_size * hid_size) * sent_len
-        # weight.size = batch_size *  hid_size * kernel_width
-        # output.size = 1 * batch_size * sent_len
         # groups = batch_size
-        #inp = xs_h.permute(1, 2, 0).contiguous().view(1, batch_size * hid_size, sent_len)
-        #inp = xs_h.permute(1, 2, 0) # B, nhid, L
-        #inp = self.tanh(self.sa(s_tm1)[None, :, :] + uh)
+        # input.size = 1 * (batch_size * k_size) * kv_len
+        # weight.size = batch_size *  k_size * kernel_width
+        # output.size = 1 * batch_size * kv_len
         # L, B, nhid -> B, nhid, L
-        #xs_h = xs_h.permute(1, 0, 2).contiguous().view(B, 1, -1)     # -> (B, 1, L * n_hids)
-        inp = xs_h.permute(1, 2, 0).contiguous().view(1, batch_size * hid_size, sent_len)
-        #kernel = torch.bmm(s_tm1.unsqueeze(1), self.state2kernel)
-        kernel = self.state_to_kernel(s_tm1).view(batch_size, hid_size, self.kernel_width)
-        #print inp.size(), kernel.size(), batch_size, self.padding_width
-        #conv_res = F.conv1d(inp, self.conv_weight, self.conv_bias, groups=batch_size, padding=self.padding_width) # batch_size * sent_len
-        #conv_res = F.conv1d(inp, self.conv_weight, groups=batch_size, padding=self.padding_width) # batch_size * sent_len
-        conv_res = F.conv1d(inp, kernel, groups=batch_size, padding=self.padding_width) # batch_size * sent_len
-        #print conv_res.size()
-        conv_res = conv_res.view(batch_size, sent_len).t()
-        e_ij = self.maskSoftmax(conv_res, mask=xs_mask, dim=0) # sent_len * batch * hid_size
+        inp = k.permute(1, 2, 0).contiguous().view(1, batch_size * k_size, kv_len)
+        kernel = self.q_to_kernel(q).view(batch_size, k_size, self.kernel_width)
+        conv_res = F.conv1d(inp, kernel, groups=batch_size, padding=self.padding_width) # 1 * batch_size * kv_len
+        a_ij = conv_res.view(batch_size, kv_len).t() # kv_len * batch_size
+        kv_mask = k_mask[:,:,None] if k_mask is not None else k_mask
+        e_ij = self.maskSoftmax(a_ij, mask=kv_mask, dim=0) # kv_len * batch_size
 
-        attend = (e_ij[:, :, None] * xs_h).sum(0)
-        return  None, None, conv_res, e_ij, attend
+        attend = (e_ij[:, :, None] * v).sum(0)
+        return  None, None, a_ij, e_ij, attend
 
-        '''
-        _check_tanh_sa = self.tanh(self.sa(s_tm1)[None, :, :] + uh)
-        _check_a1_weight = self.a1.weight
-        _check_a1 = self.a1(_check_tanh_sa).squeeze(2)
+class AttCNN4All(nn.Module):
 
-        e_ij = self.maskSoftmax(_check_a1, mask=xs_mask, dim=0) # sent_len * batch * hid_size
+    def __init__(self, q_size, k_size, v_size, kernel_width = 3):
 
-        attend = (e_ij[:, :, None] * xs_h).sum(0)
+        super(AttCNN4All, self).__init__()
+        self.q_size = q_size
+        self.k_size = k_size
+        self.v_size = v_size
+        self.kernel_width = kernel_width
+        self.padding_width = (self.kernel_width - 1) / 2
+        # batch_size * q_size -> batch_size * k_size * kernel_width
+        self.q_to_kernel = nn.Linear(q_size, v_size * k_size * self.kernel_width, bias=True)
+        #nn.init.xavier_normal(self.q_to_kernel.weight)
+        self.maskSoftmax = MaskSoftmax()
 
-        return _check_tanh_sa, _check_a1_weight, _check_a1, e_ij, attend
-        '''
+    def forward(self, q, k, v, k_mask=None):
+
+        kv_len, batch_size, k_size = k.size()
+        kv_len, batch_size, v_size = v.size()
+        # q.size = batch_size * q_size
+
+        # conv1d(input, weight)
+        #### original parameter dimensions ####
+        # input.size = batch_size * in_channels * input_width
+        # weight.size = out_channels * in_channels * kernel_width
+        # output.size = batch_size * out_channels * output_width
+        #### use groups to make every sentence in batch should have its own kernel #####
+        # groups = batch_size
+        # input.size = 1 * (batch_size * k_size) * kv_len
+        # weight.size = (batch_size * k_size) * k_size * kernel_width
+        # output.size = 1 * batch_size * kv_len
+        # L, B, nhid -> B, nhid, L
+        inp = k.permute(1, 2, 0).contiguous().view(1, batch_size * k_size, kv_len)
+        kernel = self.q_to_kernel(q).view(batch_size * v_size, k_size, self.kernel_width)
+
+        # 1 * (batch_size * v_size) * kv_len
+        conv_res = F.conv1d(inp, kernel, groups=batch_size, padding=self.padding_width)
+        a_ij = conv_res.view(batch_size, v_size, kv_len).permute(2, 0, 1) # kv_len * batch_size * v_size
+        kv_mask = k_mask[:,:,None] if k_mask is not None else k_mask
+        e_ij = self.maskSoftmax(a_ij, mask=kv_mask) # kv_len * batch_size * v_size
+
+        self.do_directly_output_attend = False
+        if self.do_directly_output_attend:
+            attend, _ = a_ij.max(dim = 0)
+        else: # weight dot v
+            attend = (e_ij * v).sum(0)
+
+        return  None, None, a_ij, e_ij, attend
 
 class Attention(nn.Module):
 
@@ -192,7 +243,7 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
 
         self.max_out = max_out
-        self.attention = AttentionConv(wargs.dec_hid_size, wargs.align_size)
+        self.attention = MultiAttention(q_size = wargs.dec_hid_size, k_size = wargs.align_size, v_size = wargs.dec_hid_size)
         self.trg_lookup_table = nn.Embedding(trg_vocab_size, wargs.trg_wemb_size, padding_idx=PAD)
         self.tanh = nn.Tanh()
         self.sigmoid = nn.Sigmoid()
@@ -225,7 +276,8 @@ class Decoder(nn.Module):
         s_above = self.gru1(y_tm1, y_mask, s_tm1)
         # alpha_ij: (slen, batch_size), attend: (batch_size, enc_hid_size)
         _check_tanh_sa, _check_a1_weight, _check_a1, alpha_ij, attend \
-                = self.attention(s_above, xs_h, uh, xs_mask)
+                = self.attention(q = s_above, v = xs_h, k = uh, k_mask=xs_mask)
+                #= self.attention(s_above, xs_h, uh, xs_mask)
 
         s_t = self.gru2(attend, y_mask, s_above)
 
