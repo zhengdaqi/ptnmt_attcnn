@@ -30,7 +30,6 @@ Decoder layer
 dec_hid_size = 512
 # Size of the output vector
 out_size = 512
-drop_rate = 0.5
 
 # Directory to save model, test output and validation output
 dir_model = 'wmodel'
@@ -253,6 +252,6 @@ d_inner_hid=1024
 n_layers=1
 n_head=8
 warmup_steps=8000
-drop_rate = 0.1
+drop_rate = 0.1 if model == 8 else 0.5
 
 
