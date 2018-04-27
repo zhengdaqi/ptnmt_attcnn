@@ -136,8 +136,8 @@ class MultiHeadAttention(nn.Module):
         self.layer_norm = Layer_Norm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.temper = np.power(d_model, 0.5)
-        self.kernel_width = 3
-        self.bconv1d = BatchConv1d(d_k, d_k, self.kernel_width)
+        #self.kernel_width = 3
+        #self.bconv1d = BatchConv1d(d_k, d_k, self.kernel_width)
 
         #self.proj = nn.Linear(n_head*d_v, d_model)
         self.proj = XavierLinear(n_head*d_v, d_model)
@@ -174,7 +174,8 @@ class MultiHeadAttention(nn.Module):
         '''
 
         # (B*n_head, trg_L, src_L)
-        #attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
+        attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
+        '''
         k_s_mask = k_s
         sys.stdout.flush()
         if attn_mask is not None:   # (B, L_q, L_k)
@@ -185,6 +186,7 @@ class MultiHeadAttention(nn.Module):
         else:
             pass
         attn = self.bconv1d(q_s, k_s_mask) / self.temper
+        '''
 
         if attn_mask is not None:   # (B, L_q, L_k)
             attn_mask = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
