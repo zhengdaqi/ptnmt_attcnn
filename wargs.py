@@ -30,7 +30,6 @@ Decoder layer
 dec_hid_size = 512
 # Size of the output vector
 out_size = 512
-drop_rate = 0.5
 
 # Directory to save model, test output and validation output
 dir_model = 'wmodel'
@@ -180,9 +179,11 @@ fix_pre_params = False
 
 # decoder hype-parameters
 search_mode = 1
-beam_size = 10
+with_batch=1
+ori_search=0
+beam_size = 4
 vocab_norm = 1  # softmax
-len_norm = 1    # 0: no noraml, 1: length normal, 2: alpha-beta
+len_norm = 2    # 0: no noraml, 1: length normal, 2: alpha-beta
 with_mv = 0
 merge_way = 'Y'
 avg_att = 0
@@ -237,7 +238,7 @@ print_att = True
 #self_norm_alpha = 0.5
 self_norm_alpha = None
 #dec_gpu_id = None
-gpu_id = [3]
+gpu_id = [5]
 #gpu_id = None
 
 # Transfomer
@@ -251,8 +252,6 @@ d_inner_hid=1024
 n_layers=1
 n_head=8
 warmup_steps=8000
-drop_rate=0.1
+drop_rate = 0.1 if model == 8 else 0.5
 
-with_batch=1
-ori_search=0
 
