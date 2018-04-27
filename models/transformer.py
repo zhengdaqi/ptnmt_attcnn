@@ -136,7 +136,8 @@ class MultiHeadAttention(nn.Module):
         self.layer_norm = Layer_Norm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.temper = np.power(d_model, 0.5)
-        self.bconv1d = BatchConv1d(d_k, d_k, kernel_width=3)
+        self.kernel_width = 3
+        self.bconv1d = BatchConv1d(d_k, d_k, self.kernel_width)
 
         #self.proj = nn.Linear(n_head*d_v, d_model)
         self.proj = XavierLinear(n_head*d_v, d_model)
@@ -164,9 +165,26 @@ class MultiHeadAttention(nn.Module):
         k_s = tc.bmm(k_s, self.w_k).view(-1, L_k, self.d_k) # (B*n_head, L_k, d_k)
         v_s = tc.bmm(v_s, self.w_v).view(-1, L_v, self.d_v) # (B*n_head, L_v, d_v)
 
+        '''
+        q_s_r = q_s[:, :, :, None].repeat(1, 1, 1, self.kernel_width) # -> (n_head*B, L_q, L_k, kernel_width)
+        q_s_r[:, :1, :, 1] = 0
+        q_s_r[:, 1:, :, 1] = q_s_r[:, :-1, :, 0]
+        q_s_r[:, :2, :, 2] = 0
+        q_s_r[:, 2:, :, 2] = q_s_r[:, :-2, :, 0]
+        '''
+
         # (B*n_head, trg_L, src_L)
         #attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
-        attn = self.bconv1d(q_s, k_s) / self.temper
+        k_s_mask = k_s
+        sys.stdout.flush()
+        if attn_mask is not None:   # (B, L_q, L_k)
+            attn_mask_repeat = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
+            attn_mask_repeat = attn_mask_repeat.permute(0, 2, 1)[:,:,0][:,:,None] # -> (n_head*B, L_k, 1)
+            attn_mask_repeat = attn_mask_repeat.repeat(1, 1, self.d_k) # -> (n_head*B, L_k, d_k)
+            k_s_mask.data.masked_fill_(attn_mask_repeat, 0.0)
+        else:
+            pass
+        attn = self.bconv1d(q_s, k_s_mask) / self.temper
 
         if attn_mask is not None:   # (B, L_q, L_k)
             attn_mask = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
