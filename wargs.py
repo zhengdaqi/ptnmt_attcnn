@@ -251,6 +251,7 @@ d_inner_hid=1024
 n_layers=1
 n_head=8
 warmup_steps=8000
+drop_rate=0.1
 
 with_batch=1
 ori_search=0
