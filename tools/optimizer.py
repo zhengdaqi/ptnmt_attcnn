@@ -80,13 +80,13 @@ class Optim(object):
         # attention is all you need
         if self.model_type == 8:
             self.n_current_steps += 1
-            new_lr = math.pow(self.d_model, -0.5) * min(
+            self.learning_rate = math.pow(self.d_model, -0.5) * min(
                 math.pow(self.n_current_steps, -0.5),
                 self.n_current_steps * math.pow(self.warmup_steps, -1.5)
             )
             #self.learning_rate = wargs.learning_rate * lr_vary
             for param_group in self.optimizer.param_groups:
-                param_group['lr'] = new_lr
+                param_group['lr'] = self.learning_rate
 
     def update_learning_rate(self, bleu, epoch):
 
