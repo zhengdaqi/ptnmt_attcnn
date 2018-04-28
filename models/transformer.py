@@ -82,7 +82,10 @@ class BatchConv1d(nn.Module):
         self.padding_width = (self.kernel_width - 1) / 2
         # (batch_size * q_len) * q_size -> (batch_size * q_len) * k_size * kernel_width
         self.q_to_kernel = nn.Linear(q_size, k_size * self.kernel_width, bias=True)
+        self.q_to_bias = nn.Linear(q_size, 1, bias=True)
         #nn.init.xavier_normal(self.q_to_kernel.weight)
+        self.bias_b = nn.Parameter(tc.FloatTensor(1))
+        self.bias_b = 0.0
 
     def forward(self, q, k):
 
@@ -98,13 +101,20 @@ class BatchConv1d(nn.Module):
         # groups = batch_size
         # input.size = 1 * (batch_size * k_size) * kv_len
         # weight.size = batch_size *  k_size * kernel_width
+        # bias.size = batch_size
         # output.size = 1 * batch_size * kv_len
         # B, L, nhid -> B, nhid, L
         inp = k.permute(0, 2, 1).contiguous().view(1, batch_size * k_size, k_len)
         q_flat = q.view(batch_size * q_len, q_size)
         kernel = self.q_to_kernel(q_flat).view(batch_size * q_len, k_size, self.kernel_width)
-        conv_res = F.conv1d(inp, kernel, groups=batch_size, padding=self.padding_width) # 1 * batch_size * k_len
-        a_ij = conv_res.view(batch_size, q_len, k_len) # kv_len * batch_size
+        bias   = self.q_to_bias  (q_flat).view(batch_size * q_len)
+        conv_res = F.conv1d(inp,
+                            kernel,
+                            bias=bias,
+                            groups=batch_size,
+                            padding=self.padding_width) # 1 * batch_size * k_len
+        conv_res_b = conv_res + self.bias_b
+        a_ij = conv_res_b.view(batch_size, q_len, k_len) # kv_len * batch_size
 
         return a_ij
 
