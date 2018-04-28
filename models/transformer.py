@@ -85,7 +85,8 @@ class BatchConv1d(nn.Module):
         self.q_to_bias = nn.Linear(q_size, 1, bias=True)
         #nn.init.xavier_normal(self.q_to_kernel.weight)
         self.bias_b = nn.Parameter(tc.FloatTensor(1))
-        self.bias_b = 0.0
+        nn.init.normal(self.bias_b)
+        #self.bias_b.fill_(0.0)
 
     def forward(self, q, k):
 
