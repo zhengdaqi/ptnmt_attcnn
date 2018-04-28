@@ -118,7 +118,7 @@ class MultiHeadAttention(nn.Module):
             d_k(int):       the dimension of queries and keys
             d_v(int):       the dimension of values
     '''
-    def __init__(self, d_model, n_head, d_k, d_v, dropout=0.1):
+    def __init__(self, d_model, n_head, d_k, d_v, dropout=0.1, use_attcnn=True):
 
         super(MultiHeadAttention, self).__init__()
 
@@ -136,8 +136,10 @@ class MultiHeadAttention(nn.Module):
         self.layer_norm = Layer_Norm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.temper = np.power(d_model, 0.5)
-        #self.kernel_width = 3
-        #self.bconv1d = BatchConv1d(d_k, d_k, self.kernel_width)
+        self.use_attcnn = use_attcnn
+        if self.use_attcnn:
+            self.kernel_width = 3
+            self.bconv1d = BatchConv1d(d_k, d_k, self.kernel_width)
 
         #self.proj = nn.Linear(n_head*d_v, d_model)
         self.proj = XavierLinear(n_head*d_v, d_model)
@@ -173,20 +175,19 @@ class MultiHeadAttention(nn.Module):
         q_s_r[:, 2:, :, 2] = q_s_r[:, :-2, :, 0]
         '''
 
-        # (B*n_head, trg_L, src_L)
-        attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
-        '''
-        k_s_mask = k_s
-        sys.stdout.flush()
-        if attn_mask is not None:   # (B, L_q, L_k)
-            attn_mask_repeat = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
-            attn_mask_repeat = attn_mask_repeat.permute(0, 2, 1)[:,:,0][:,:,None] # -> (n_head*B, L_k, 1)
-            attn_mask_repeat = attn_mask_repeat.repeat(1, 1, self.d_k) # -> (n_head*B, L_k, d_k)
-            k_s_mask.data.masked_fill_(attn_mask_repeat, 0.0)
+        if self.use_attcnn:
+            k_s_mask = k_s.repeat(1, 1, 1)
+            if attn_mask is not None:   # (B, L_q, L_k)
+                attn_mask_repeat = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
+                attn_mask_repeat = attn_mask_repeat.permute(0, 2, 1)[:,:,0][:,:,None] # -> (n_head*B, L_k, 1)
+                attn_mask_repeat = attn_mask_repeat.repeat(1, 1, self.d_k) # -> (n_head*B, L_k, d_k)
+                k_s_mask.data.masked_fill_(attn_mask_repeat, 0.0)
+            else:
+                pass
+            attn = self.bconv1d(q_s, k_s_mask) / self.temper
         else:
-            pass
-        attn = self.bconv1d(q_s, k_s_mask) / self.temper
-        '''
+            # (B*n_head, trg_L, src_L)
+            attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
 
         if attn_mask is not None:   # (B, L_q, L_k)
             attn_mask = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
