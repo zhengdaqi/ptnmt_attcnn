@@ -73,7 +73,7 @@ class Transformer(nn.Module):
 
 class BatchConv1d(nn.Module):
 
-    def __init__(self, q_size, k_size, kernel_width = 3):
+    def __init__(self, q_size, k_size, kernel_width = 3, use_mask=False):
 
         super(BatchConv1d, self).__init__()
         self.q_size = q_size
@@ -87,6 +87,11 @@ class BatchConv1d(nn.Module):
         self.bias_b = nn.Parameter(tc.FloatTensor(1))
         nn.init.normal(self.bias_b)
         #self.bias_b.fill_(0.0)
+        self.use_mask = use_mask
+        if self.use_mask is True:
+            self.kernel_mask = tc.zeros(kernel_width)
+            self.kernel_mask[:(self.kernel_width + 1) / 2] = 1
+            self.kernel_mask = Variable(self.kernel_mask, requires_grad=False).cuda()
 
     def forward(self, q, k):
 
@@ -104,16 +109,20 @@ class BatchConv1d(nn.Module):
         # weight.size = batch_size *  k_size * kernel_width
         # bias.size = batch_size
         # output.size = 1 * batch_size * kv_len
-        # B, L, nhid -> B, nhid, L
+        # q: (B*n_head, L_q, d_k), k: (B*n_head, L_k, d_k)
         inp = k.permute(0, 2, 1).contiguous().view(1, batch_size * k_size, k_len)
-        q_flat = q.view(batch_size * q_len, q_size)
-        kernel = self.q_to_kernel(q_flat).view(batch_size * q_len, k_size, self.kernel_width)
-        bias   = self.q_to_bias  (q_flat).view(batch_size * q_len)
+        #q_flat = q.view(batch_size * q_len, q_size)
+        #kernel = self.q_to_kernel(q_flat).view(batch_size * q_len, k_size, self.kernel_width)
+        #bias   = self.q_to_bias  (q_flat).view(batch_size * q_len)
+        kernel = self.q_to_kernel(q).view(batch_size * q_len, k_size, self.kernel_width)
+        if self.use_mask is True:
+            kernel = kernel * self.kernel_mask[None, None, :]
+        bias   = self.q_to_bias  (q).view(batch_size * q_len)
         conv_res = F.conv1d(inp,
                             kernel,
                             bias=bias,
                             groups=batch_size,
-                            padding=self.padding_width) # 1 * batch_size * k_len
+                            padding=self.padding_width) # (1, batch_size * q_len, k_len) 
         conv_res_b = conv_res + self.bias_b
         a_ij = conv_res_b.view(batch_size, q_len, k_len) # kv_len * batch_size
 
@@ -129,7 +138,7 @@ class MultiHeadAttention(nn.Module):
             d_k(int):       the dimension of queries and keys
             d_v(int):       the dimension of values
     '''
-    def __init__(self, d_model, n_head, d_k, d_v, dropout=0.1, use_attcnn=True):
+    def __init__(self, d_model, n_head, d_k, d_v, dropout=0.1, use_attcnn=True, use_mask=False):
 
         super(MultiHeadAttention, self).__init__()
 
@@ -150,7 +159,8 @@ class MultiHeadAttention(nn.Module):
         self.use_attcnn = use_attcnn
         if self.use_attcnn:
             self.kernel_width = 3
-            self.bconv1d = BatchConv1d(d_k, d_k, self.kernel_width)
+            self.bconv1d = BatchConv1d(d_k, d_k, self.kernel_width, use_mask=use_mask)
+            self.use_mask = use_mask
 
         #self.proj = nn.Linear(n_head*d_v, d_model)
         self.proj = XavierLinear(n_head*d_v, d_model)
@@ -187,15 +197,17 @@ class MultiHeadAttention(nn.Module):
         '''
 
         if self.use_attcnn:
+            '''
             k_s_mask = k_s.repeat(1, 1, 1)
-            if attn_mask is not None:   # (B, L_q, L_k)
+            if self.use_mask is True and attn_mask is not None:   # (B, L_q, L_k)
                 attn_mask_repeat = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
                 attn_mask_repeat = attn_mask_repeat.permute(0, 2, 1)[:,:,0][:,:,None] # -> (n_head*B, L_k, 1)
                 attn_mask_repeat = attn_mask_repeat.repeat(1, 1, self.d_k) # -> (n_head*B, L_k, d_k)
                 k_s_mask.data.masked_fill_(attn_mask_repeat, 0.0)
             else:
                 pass
-            attn = self.bconv1d(q_s, k_s_mask) / self.temper
+            '''
+            attn = self.bconv1d(q_s, k_s) / self.temper
         else:
             # (B*n_head, trg_L, src_L)
             attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
@@ -323,7 +335,8 @@ class DecoderLayer(nn.Module):
     def __init__(self, d_model, n_head, d_k=64, d_v=64, d_inner_hid=2048, dropout=0.1):
 
         super(DecoderLayer, self).__init__()
-        self.trg_slf_attn = MultiHeadAttention(d_model, n_head, d_k, d_v, dropout=dropout)
+        self.trg_slf_attn = MultiHeadAttention(d_model, n_head, d_k, d_v, dropout=dropout,
+                                               use_mask=True)
         self.trg_src_attn = MultiHeadAttention(d_model, n_head, d_k, d_v, dropout=dropout)
         self.pos_ffn = PositionwiseFeedForward(d_model, d_inner_hid, dropout=dropout)
 
