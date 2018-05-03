@@ -253,5 +253,6 @@ n_layers=1
 n_head=8
 warmup_steps=8000
 drop_rate = 0.1 if model == 8 else 0.5
+use_attcnn=False
 
 
