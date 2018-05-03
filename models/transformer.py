@@ -160,7 +160,7 @@ class MultiHeadAttention(nn.Module):
         self.w_v = XavierLinear(d_model, d_model, bias=False)
 
         #self.temper = np.power(d_model, 0.5)
-        self.temper = np.power(d_k, 0.5)
+        self.temper = tc.pow(d_k, 0.5)
         self.mSoftMax = MaskSoftmax()
         self.dropout = nn.Dropout(dropout)
         self.use_attcnn = use_attcnn
@@ -199,10 +199,10 @@ class MultiHeadAttention(nn.Module):
         k = self.w_k(k)
         v = self.w_v(v)
 
-        # (B, L_q, d_model) -> n_h:[(B, L_q, d_k)] -> (n_h, B, L_q, d_k)
-        q_s = tc.stack(tc.split(q, n_h, dim=-1), dim=0).view(-1, L_q, d_k)
-        k_s = tc.stack(tc.split(k, n_h, dim=-1), dim=0).view(-1, L_k, d_k)
-        v_s = tc.stack(tc.split(v, n_h, dim=-1), dim=0).view(-1, L_v, d_v)
+        # (B, L_q, d_model) -> n_h:[(B, L_q, d_k)] -> (B, n_h, L_q, d_k) -> (n_h*B, L_q, d_k)
+        q_s = tc.stack(tc.split(q, n_h, dim=-1), dim=1).view(-1, L_q, d_k)
+        k_s = tc.stack(tc.split(k, n_h, dim=-1), dim=1).view(-1, L_k, d_k)
+        v_s = tc.stack(tc.split(v, n_h, dim=-1), dim=1).view(-1, L_v, d_v)
 
 
         '''
