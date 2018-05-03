@@ -122,7 +122,7 @@ class BatchConv1d(nn.Module):
                             kernel,
                             bias=bias,
                             groups=batch_size,
-                            padding=self.padding_width) # (1, batch_size * q_len, k_len) 
+                            padding=self.padding_width) # (1, batch_size * q_len, k_len)
         conv_res_b = conv_res + self.bias_b
         a_ij = conv_res_b.view(batch_size, q_len, k_len) # kv_len * batch_size
 
@@ -165,8 +165,12 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.use_attcnn = use_attcnn
         if self.use_attcnn is True:
-            self.kernel_width = 3
-            self.bconv1d = BatchConv1d(d_k, d_k, self.kernel_width, use_mask=use_mask)
+            #self.kernel_width = 7
+            self.kws = [1,1,3,3,5,5,7,7]
+            self.kernels = []
+            for kw in kws:
+                bconv1d = BatchConv1d(d_k, d_k, kw, use_mask=use_mask)
+                self.kernels.append(bconv1d)
             self.use_mask = use_mask
 
         #self.proj = nn.Linear(n_head*d_v, d_model)
@@ -224,12 +228,22 @@ class MultiHeadAttention(nn.Module):
             else:
                 pass
             '''
-            attn = self.bconv1d(q_s, k_s) / self.temper
+            '''
+            attn = self.bconv1d(q_s.view(B_q*n_h, L_q, d_model_q/n_h),
+                                k_s.view(B_k*n_h, L_k, d_model_k/n_h)
+                                ).view(n_h, B_k, L_q, L_k) / self.temper
+            '''
+            attns = []
+            for i in range(n_h):
+                att = self.kernels[i](q_s[i], k_s[i])
+                attns.append(att)
+            attn = tc.stack(attns, dim=0) / self.temper
+
         else:
             # (n_head*B, L_q, d_k) * (n_head*B, d_k, L_k)
             #attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (n_head*B, L_q, L_k)
             # (n_head, B, L_q, d_k) * (n_head, B, d_k, L_k)
-            print q_s.size(), k_s.permute(0, 1, 3, 2).size()
+            #print q_s.size(), k_s.permute(0, 1, 3, 2).size()
             attn = tc.matmul(q_s, k_s.permute(0, 1, 3, 2)) / self.temper  # (n_head, B, L_q, L_k)
 
         if attn_mask is not None:   # (B, L_q, L_k)

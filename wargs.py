@@ -95,7 +95,7 @@ if dataset == 'S':
     #tests_prefix = ['test.de-en']
     #ref_cnt = 1
     batch_size = 40
-    max_epochs = 50
+    max_epochs = 200
     #src_dict_size = 32009
     #trg_dict_size = 22822
     epoch_eval = True
@@ -238,7 +238,7 @@ print_att = True
 #self_norm_alpha = 0.5
 self_norm_alpha = None
 #dec_gpu_id = None
-gpu_id = [1]
+gpu_id = [3]
 #gpu_id = None
 
 # Transfomer
@@ -253,6 +253,6 @@ n_layers=1
 n_head=8
 warmup_steps=8000
 drop_rate = 0.1 if model == 8 else 0.5
-use_attcnn=False
+use_attcnn=True
 
 
