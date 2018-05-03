@@ -160,7 +160,7 @@ class MultiHeadAttention(nn.Module):
         self.w_v = XavierLinear(d_model, d_model, bias=False)
 
         #self.temper = np.power(d_model, 0.5)
-        self.temper = tc.pow(d_k, 0.5)
+        self.temper = d_k ** 0.5
         self.mSoftMax = MaskSoftmax()
         self.dropout = nn.Dropout(dropout)
         self.use_attcnn = use_attcnn
