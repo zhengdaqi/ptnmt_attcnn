@@ -14,8 +14,8 @@ import wargs
 if wargs.model == 0 or wargs.model == 1: from searchs.nbs import *
 elif wargs.model == 8: from searchs.nbs_t2t import *
 
-if wargs.search_mode == 1: from searchs.nbs import *
-else: from searchs.cp import *
+#if wargs.search_mode == 1: from searchs.nbs import *
+#else: from searchs.cp import *
 
 from tools.utils import *
 from tools.bleu import bleu_file

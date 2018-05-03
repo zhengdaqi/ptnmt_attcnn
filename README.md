@@ -14,3 +14,4 @@ python wtrans.py -m model_file -i test_file_prefix
 
 score-alignments.py -d path/900 -s zh -t en -g wa -i force_decoding_alignment
 
+# feat: add attcnn

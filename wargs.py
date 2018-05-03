@@ -30,7 +30,6 @@ Decoder layer
 dec_hid_size = 512
 # Size of the output vector
 out_size = 512
-drop_rate = 0.5
 
 # Directory to save model, test output and validation output
 dir_model = 'wmodel'
@@ -180,9 +179,11 @@ fix_pre_params = False
 
 # decoder hype-parameters
 search_mode = 1
-beam_size = 10
+with_batch=1
+ori_search=0
+beam_size = 4
 vocab_norm = 1  # softmax
-len_norm = 1    # 0: no noraml, 1: length normal, 2: alpha-beta
+len_norm = 2    # 0: no noraml, 1: length normal, 2: alpha-beta
 with_mv = 0
 merge_way = 'Y'
 avg_att = 0
@@ -195,14 +196,14 @@ beta_cover_penalty = 0.
 Starting learning rate. If adagrad/adadelta/adam is used, then this is the global learning rate.
 Recommended settings: sgd = 1, adagrad = 0.1, adadelta = 1, adam = 0.001
 '''
-opt_mode = 'adadelta'
-learning_rate = 1.0
-rho = 0.95
+#opt_mode = 'adadelta'
+#learning_rate = 1.0
+#rho = 0.95
 
-#opt_mode = 'adam'
-#learning_rate = 1e-3
-#beta_1 = 0.9
-#beta_2 = 0.98
+opt_mode = 'adam'
+learning_rate = 1e-3
+beta_1 = 0.9
+beta_2 = 0.98
 
 #opt_mode = 'sgd'
 #learning_rate = 1.
@@ -221,7 +222,7 @@ segments = False
 seg_val_tst_dir = 'orule_1.7'
 
 # 0: groundhog, 1: rnnsearch
-model = 1
+model = 8 # 8 for transfomer
 
 # convolutional layer
 #fltr_windows = [1, 3, 5]   # windows size
@@ -237,7 +238,7 @@ print_att = True
 #self_norm_alpha = 0.5
 self_norm_alpha = None
 #dec_gpu_id = None
-gpu_id = [0]
+gpu_id = [1]
 #gpu_id = None
 
 # Transfomer
@@ -247,9 +248,11 @@ d_k=64  # d_v == d_model // n_head
 d_v=64
 d_model=512     # == n_head*d_v
 d_word_vec=512
-d_inner_hid=1024
+d_inner_hid=512
 n_layers=1
 n_head=8
 warmup_steps=8000
+drop_rate = 0.1 if model == 8 else 0.5
+use_attcnn=False
 
 
