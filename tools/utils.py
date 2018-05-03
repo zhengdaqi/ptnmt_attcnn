@@ -541,8 +541,9 @@ class Layer_Norm(nn.Module):
     def __init__(self, d_hid, eps=1e-3):
         super(Layer_Norm, self).__init__()
         self.eps = eps
-        self.g = nn.Parameter(tc.ones(d_hid), requires_grad=True)
-        self.b = nn.Parameter(tc.zeros(d_hid), requires_grad=True)
+        self.g = nn.Parameter(tc.ones(d_hid), requires_grad=True).cuda()
+        self.b = nn.Parameter(tc.zeros(d_hid), requires_grad=True).cuda()
+        #if wargs.gpu_id: self.g, self.b = self.g.cuda(), self.b.cuda()
 
     def forward(self, z):
 
@@ -570,7 +571,7 @@ class Layer_Norm(nn.Module):
     a Tensor
 '''
 def layer_prepostprocess(pre_layer_out, pre_layer_in=None, handle_type=None, normlizer=None,
-                         epsilon=1e-6, dropout_rate=0., training=True):
+                         epsilon=1e-6, dropout_rate=0.1, training=True):
     if handle_type is None: return pre_layer_out
     if 'a' in handle_type: assert pre_layer_in is not None, 'Residual requires previous input !'
     for c in handle_type:

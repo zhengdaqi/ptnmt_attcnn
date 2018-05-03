@@ -17,7 +17,7 @@ class Transformer(nn.Module):
 
     def __init__(self, n_src_vocab, n_tgt_vocab, n_max_seq, n_layers=6, n_head=8,
                  d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1,
-                 proj_share_weight=True, embs_share_weight=True):
+                 proj_share_weight=True, embs_share_weight=True, use_attcnn=False):
 
         wlog('Transformer Model ========================= ')
         wlog('\tn_src_vocab:        {}'.format(n_src_vocab))
@@ -31,15 +31,16 @@ class Transformer(nn.Module):
         wlog('\tdropout:            {}'.format(dropout))
         wlog('\tproj_share_weight:  {}'.format(proj_share_weight))
         wlog('\tembs_share_weight:  {}'.format(embs_share_weight))
+        wlog('\tuse_attcnn:         {}'.format(use_attcnn))
 
         super(Transformer, self).__init__()
         self.encoder = Encoder(n_src_vocab, n_max_seq, n_layers=n_layers, n_head=n_head,
                                d_word_vec=d_word_vec, d_model=d_model,
-                               d_inner_hid=d_inner_hid, dropout=dropout)
+                               d_inner_hid=d_inner_hid, dropout=dropout, use_attcnn=use_attcnn)
         self.decoder = Decoder(n_tgt_vocab, n_max_seq, n_layers=n_layers, n_head=n_head,
                                d_word_vec=d_word_vec, d_model=d_model,
                                d_inner_hid=d_inner_hid, dropout=dropout,
-                               proj_share_weight=proj_share_weight)
+                               proj_share_weight=proj_share_weight, use_attcnn=use_attcnn)
 
         assert d_model == d_word_vec, 'To facilitate the residual connections, \
                 the dimensions of all module output shall be the same.'
@@ -115,9 +116,8 @@ class BatchConv1d(nn.Module):
         #kernel = self.q_to_kernel(q_flat).view(batch_size * q_len, k_size, self.kernel_width)
         #bias   = self.q_to_bias  (q_flat).view(batch_size * q_len)
         kernel = self.q_to_kernel(q).view(batch_size * q_len, k_size, self.kernel_width)
-        if self.use_mask is True:
-            kernel = kernel * self.kernel_mask[None, None, :]
         bias   = self.q_to_bias  (q).view(batch_size * q_len)
+        if self.use_mask is True: kernel = kernel * self.kernel_mask[None, None, :]
         conv_res = F.conv1d(inp,
                             kernel,
                             bias=bias,
@@ -145,19 +145,26 @@ class MultiHeadAttention(nn.Module):
         assert d_model % n_head == 0, 'd_model {} divided by n_head {}.'.format(d_model, n_head)
         self.d_model, self.n_head, self.d_k, self.d_v = d_model, n_head, d_k, d_v
 
-        self.w_q = nn.Parameter(tc.FloatTensor(n_head, d_model, d_k))
-        self.w_k = nn.Parameter(tc.FloatTensor(n_head, d_model, d_k))
-        self.w_v = nn.Parameter(tc.FloatTensor(n_head, d_model, d_v))
-        init.xavier_normal(self.w_q)
-        init.xavier_normal(self.w_k)
-        init.xavier_normal(self.w_v)
+        #self.w_q = nn.Parameter(tc.FloatTensor(n_head, d_model, d_k))
+        #self.w_k = nn.Parameter(tc.FloatTensor(n_head, d_model, d_k))
+        #self.w_v = nn.Parameter(tc.FloatTensor(n_head, d_model, d_v))
+        #self.w_q = nn.Parameter(tc.FloatTensor(n_head, d_model/n_head, d_k))
+        #self.w_k = nn.Parameter(tc.FloatTensor(n_head, d_model/n_head, d_k))
+        #self.w_v = nn.Parameter(tc.FloatTensor(n_head, d_model/n_head, d_v))
+        #init.xavier_normal(self.w_q)
+        #init.xavier_normal(self.w_k)
+        #init.xavier_normal(self.w_v)
 
+        self.w_q = XavierLinear(d_model, d_model, bias=False)
+        self.w_k = XavierLinear(d_model, d_model, bias=False)
+        self.w_v = XavierLinear(d_model, d_model, bias=False)
+
+        #self.temper = np.power(d_model, 0.5)
+        self.temper = tc.pow(d_k, 0.5)
         self.mSoftMax = MaskSoftmax()
-        self.layer_norm = Layer_Norm(d_model)
         self.dropout = nn.Dropout(dropout)
-        self.temper = np.power(d_model, 0.5)
         self.use_attcnn = use_attcnn
-        if self.use_attcnn:
+        if self.use_attcnn is True:
             self.kernel_width = 3
             self.bconv1d = BatchConv1d(d_k, d_k, self.kernel_width, use_mask=use_mask)
             self.use_mask = use_mask
@@ -179,14 +186,24 @@ class MultiHeadAttention(nn.Module):
         n_h, residual = self.n_head, q
         assert d_model_q % n_h == 0, 'd_model {} divided by n_head {}.'.format(d_model_q, n_head)
 
-        q_s = q.repeat(n_h, 1, 1).view(n_h, -1, d_model_q) # (n_head, B*L_q, d_model)
-        k_s = k.repeat(n_h, 1, 1).view(n_h, -1, d_model_k) # (n_head, B*L_k, d_model)
-        v_s = v.repeat(n_h, 1, 1).view(n_h, -1, d_model_v) # (n_head, B*L_v, d_model)
+        #q_s = q.repeat(n_h, 1, 1).view(n_h, -1, d_model_q) # (n_head, B*L_q, d_model)
+        #k_s = k.repeat(n_h, 1, 1).view(n_h, -1, d_model_k) # (n_head, B*L_k, d_model)
+        #v_s = v.repeat(n_h, 1, 1).view(n_h, -1, d_model_v) # (n_head, B*L_v, d_model)
 
         # n_head as batch size, multiply
-        q_s = tc.bmm(q_s, self.w_q).view(-1, L_q, self.d_k) # (B*n_head, L_q, d_k)
-        k_s = tc.bmm(k_s, self.w_k).view(-1, L_k, self.d_k) # (B*n_head, L_k, d_k)
-        v_s = tc.bmm(v_s, self.w_v).view(-1, L_v, self.d_v) # (B*n_head, L_v, d_v)
+        #q_s = tc.bmm(q_s, self.w_q).view(-1, L_q, self.d_k) # (B*n_head, L_q, d_k)
+        #k_s = tc.bmm(k_s, self.w_k).view(-1, L_k, self.d_k) # (B*n_head, L_k, d_k)
+        #v_s = tc.bmm(v_s, self.w_v).view(-1, L_v, self.d_v) # (B*n_head, L_v, d_v)
+
+        q = self.w_q(q)
+        k = self.w_k(k)
+        v = self.w_v(v)
+
+        # (B, L_q, d_model) -> n_h:[(B, L_q, d_k)] -> (B, n_h, L_q, d_k) -> (n_h*B, L_q, d_k)
+        q_s = tc.stack(tc.split(q, n_h, dim=-1), dim=1).view(-1, L_q, d_k)
+        k_s = tc.stack(tc.split(k, n_h, dim=-1), dim=1).view(-1, L_k, d_k)
+        v_s = tc.stack(tc.split(v, n_h, dim=-1), dim=1).view(-1, L_v, d_v)
+
 
         '''
         q_s_r = q_s[:, :, :, None].repeat(1, 1, 1, self.kernel_width) # -> (n_head*B, L_q, L_k, kernel_width)
@@ -196,7 +213,7 @@ class MultiHeadAttention(nn.Module):
         q_s_r[:, 2:, :, 2] = q_s_r[:, :-2, :, 0]
         '''
 
-        if self.use_attcnn:
+        if self.use_attcnn is True:
             '''
             k_s_mask = k_s.repeat(1, 1, 1)
             if self.use_mask is True and attn_mask is not None:   # (B, L_q, L_k)
@@ -209,8 +226,10 @@ class MultiHeadAttention(nn.Module):
             '''
             attn = self.bconv1d(q_s, k_s) / self.temper
         else:
-            # (B*n_head, trg_L, src_L)
-            attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
+            # (n_head*B, L_q, d_k) * (n_head*B, d_k, L_k)
+            attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (n_head*B, L_q, L_k)
+            # (n_head, B, L_q, d_k) * (n_head, B, d_k, L_k)
+            #attn = tc.matmul(q_s, k_s.permute(0, 1, 3, 2)) / self.temper  # (n_head, B, L_q, L_k)
 
         if attn_mask is not None:   # (B, L_q, L_k)
             attn_mask = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
@@ -226,14 +245,14 @@ class MultiHeadAttention(nn.Module):
         # one attention
         one_head_attn = attn.view(B_q, n_h, L_q, L_k)[:, 0, :, :].contiguous()
 
-        attn = self.dropout(attn)   # (B*n_head, L_q, L_k)
-        output = tc.bmm(attn, v_s)  # (B*n_head, L_q, d_v)  note: L_k == L_v
+        attn = self.dropout(attn)   # (n_head*B, L_q, L_k)
+        output = tc.bmm(attn, v_s)  # (n_head*B, L_q, d_v)  note: L_k == L_v
         # back to original batch size B
         #output = output.view(B_q, L_q, -1)  # (B_q, L_q, n_head*d_v)   can not use this !!!!
         output = tc.cat(tc.split(output, B_v, dim=0), dim=-1)
         output = self.proj(output)          # (B_q, L_q, d_model)
 
-        return self.layer_norm(self.dropout(output) + residual), attn, one_head_attn
+        return output, attn, one_head_attn
 
 class PositionwiseFeedForward(nn.Module):
     '''
@@ -251,15 +270,13 @@ class PositionwiseFeedForward(nn.Module):
         #self.w_2 = InitLinear(hidden_size, size)
         self.w_1 = nn.Conv1d(d_hid, d_inner_hid, 1) # position-wise
         self.w_2 = nn.Conv1d(d_inner_hid, d_hid, 1) # position-wise
-        #self.layer_norm = LayerNormalization(size)
-        self.layer_norm = Layer_Norm(d_hid)
-        self.dropout = nn.Dropout(dropout)
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        residual = x    # (B_q, L_q, d_model)
+        #residual = x    # (B_q, L_q, d_model)
         output = self.w_2(self.relu(self.w_1(x.permute(0, 2, 1)))).permute(0, 2, 1)
-        return self.layer_norm(self.dropout(output) + residual) # dan
+        #return self.dropout(output) + residual # da
+        return output
 
 class EncoderLayer(nn.Module):
     '''
@@ -271,25 +288,41 @@ class EncoderLayer(nn.Module):
             n_head(int): the number of head for MultiHeadAttention.
             hidden_size(int): the second-layer of the PositionwiseFeedForward.
     '''
-    def __init__(self, d_model, n_head=8, d_k=64, d_v=64, d_inner_hid=2048, dropout=0.1):
+    def __init__(self, d_model, n_head=8, d_k=64, d_v=64, d_inner_hid=2048, dropout=0.1,
+                 use_attcnn=False):
 
         super(EncoderLayer, self).__init__()
-        self.src_slf_attn = MultiHeadAttention(d_model, n_head, d_k, d_v, dropout=dropout)
+        self.ln_1 = Layer_Norm(d_model)
+        self.src_slf_attn = MultiHeadAttention(d_model, n_head, d_k, d_v, dropout=dropout,
+                                               use_attcnn=use_attcnn)
+        self.dropout = nn.Dropout(dropout)
         self.pos_ffn = PositionwiseFeedForward(d_model, d_inner_hid, dropout=dropout)
+        self.ln_2 = Layer_Norm(d_model)
 
     def forward(self, enc_input, slf_attn_mask=None):
+
+        x = enc_input
+
+        enc_input = self.ln_1(enc_input)    # n
         # q - k - v
         enc_output, enc_slf_attn, enc_slf_one_attn = self.src_slf_attn(
             enc_input, enc_input, enc_input, attn_mask=slf_attn_mask)
+        x = self.dropout(enc_output) + enc_input
+        #x = self.dropout(enc_output) + x  # da
+
+        enc_output_in = self.ln_2(x)   # n
         # enc_output: (B_q, L_q, d_model), enc_slf_attn: (B*n_head, L_q, L_k)
-        enc_output = self.pos_ffn(enc_output)
+        enc_output = self.pos_ffn(enc_output_in)
+        #enc_output = self.dropout(enc_output) + x   # da
+        enc_output = self.dropout(enc_output) + enc_output_in   # da
+
         return enc_output, enc_slf_attn, enc_slf_one_attn
 
 ''' A encoder model with self attention mechanism. '''
 class Encoder(nn.Module):
 
     def __init__(self, n_src_vocab, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1):
+            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1, use_attcnn=False):
 
         super(Encoder, self).__init__()
 
@@ -304,10 +337,14 @@ class Encoder(nn.Module):
         wlog('src position emb: {}'.format(self.position_enc.weight.data.size()))
         wlog('src emb: {}'.format(self.src_word_emb.weight.data.size()))
 
+        self.dropout = nn.Dropout(dropout)
         #print 'src: ', n_src_vocab, n_position
         self.layer_stack = nn.ModuleList([
-            EncoderLayer(d_model, n_head, d_k, d_v, d_inner_hid, dropout=dropout)
+            EncoderLayer(d_model, n_head, d_k, d_v, d_inner_hid,
+                         dropout=dropout, use_attcnn=use_attcnn)
             for _ in range(n_layers)])
+
+        self.ln = Layer_Norm(d_model)
 
     def forward(self, src_seq, src_pos):
 
@@ -321,26 +358,40 @@ class Encoder(nn.Module):
         #src_slf_attn_mask = src_seq.data.ne(PAD).unsqueeze(1).expand(B, L, L)
         src_slf_attn_mask = src_seq.data.eq(PAD).unsqueeze(1).expand(B, L, L)
         #src_slf_attn_mask = get_attn_padding_mask(src_seq, src_seq)
+        enc_output = self.dropout(enc_output)
+
         for enc_layer in self.layer_stack:
             # enc_output: (B_q, L_q, d_model), enc_slf_attn: (B*n_head, L_q, L_k)
             enc_output, enc_slf_attn, enc_slf_one_attn = enc_layer(enc_output, src_slf_attn_mask)
             enc_outputs += [enc_output]
             enc_slf_attns += [enc_slf_attn]
 
+        enc_outputs[-1] = self.ln(enc_outputs[-1])
+
         return (enc_outputs, enc_slf_attns, enc_slf_one_attn)
 
 class DecoderLayer(nn.Module):
     ''' Compose with three layers '''
 
-    def __init__(self, d_model, n_head, d_k=64, d_v=64, d_inner_hid=2048, dropout=0.1):
+    def __init__(self, d_model, n_head, d_k=64, d_v=64, d_inner_hid=2048, dropout=0.1,
+                 use_attcnn=False):
 
         super(DecoderLayer, self).__init__()
+        self.ln_1 = Layer_Norm(d_model)
         self.trg_slf_attn = MultiHeadAttention(d_model, n_head, d_k, d_v, dropout=dropout,
-                                               use_mask=True)
-        self.trg_src_attn = MultiHeadAttention(d_model, n_head, d_k, d_v, dropout=dropout)
+                                               use_attcnn=use_attcnn, use_mask=True)
+        self.dropout = nn.Dropout(dropout)
+        self.ln_2 = Layer_Norm(d_model)
+        self.trg_src_attn = MultiHeadAttention(d_model, n_head, d_k, d_v, dropout=dropout,
+                                               use_attcnn=use_attcnn)
         self.pos_ffn = PositionwiseFeedForward(d_model, d_inner_hid, dropout=dropout)
+        self.ln_3 = Layer_Norm(d_model)
 
     def forward(self, dec_input, enc_output, trg_slf_attn_mask=None, trg_src_attn_mask=None):
+
+        x = dec_input
+
+        dec_input = self.ln_1(dec_input)    # n
         # trg_slf_attn_mask: (B, trg_L, trg_L), trg_src_attn_mask: (B, trg_L, src_L)
         dec_output, dec_slf_attn, dec_slf_one_attn = self.trg_slf_attn(
             dec_input, dec_input, dec_input, attn_mask=trg_slf_attn_mask)
@@ -348,20 +399,30 @@ class DecoderLayer(nn.Module):
         # dec_output: (B_q, L_q, d_model) == (B, trg_L, d_model)
         # dec_slf_attn: (B*n_head, L_q, L_k) == (B*n_head, trg_L, trg_L)
 
+        x = self.dropout(dec_output) + dec_input
+        #x = self.dropout(dec_output) + x  # da
+
+        dec_output_in = self.ln_2(x)   # n
         dec_output, dec_enc_attn, dec_enc_one_attn = self.trg_src_attn(
-            dec_output, enc_output, enc_output, attn_mask=trg_src_attn_mask)
+            dec_output_in, enc_output, enc_output, attn_mask=trg_src_attn_mask)
         # (L_q, L_k, L_v) == (trg_L, src_L, src_L)
         # dec_output: (B_q, L_q, d_model) == (B, trg_L, d_model)
         # dec_enc_attn: (B*n_head, L_q, L_k) == (B*n_head, trg_L, src_L)
+        x = self.dropout(dec_output) + dec_output_in   # da
+        #x = self.dropout(dec_output) + x   # da
 
-        dec_output = self.pos_ffn(dec_output)
+        dec_output_in = self.ln_3(x)   # n
+        dec_output = self.pos_ffn(dec_output_in)
+        dec_output = self.dropout(dec_output) + dec_output_in   # da
+        #dec_output = self.dropout(dec_output) + x   # da
 
         return dec_output, dec_slf_attn, dec_enc_attn, dec_enc_one_attn
 
 class Decoder(nn.Module):
     ''' A decoder model with self attention mechanism. '''
     def __init__(self, n_tgt_vocab, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1, proj_share_weight=False):
+            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1, proj_share_weight=False,
+                 use_attcnn=False):
 
         super(Decoder, self).__init__()
         n_position = n_max_seq + 1
@@ -374,14 +435,18 @@ class Decoder(nn.Module):
         self.tgt_word_emb = nn.Embedding(n_tgt_vocab, d_word_vec, padding_idx=PAD)
         wlog('trg position emb: {}'.format(self.position_enc.weight.data.size()))
         wlog('trg emb: {}'.format(self.tgt_word_emb.weight.data.size()))
+        self.dropout = nn.Dropout(dropout)
 
         trg_lookup_table = self.tgt_word_emb if proj_share_weight is True else None
         self.classifier = Classifier(d_model, n_tgt_vocab, trg_lookup_table,
                                      trg_wemb_size=d_word_vec)
 
         self.layer_stack = nn.ModuleList([
-            DecoderLayer(d_model, n_head, d_k, d_v, d_inner_hid, dropout=dropout)
+            DecoderLayer(d_model, n_head, d_k, d_v, d_inner_hid,
+                         dropout=dropout, use_attcnn=use_attcnn)
             for _ in range(n_layers)])
+
+        self.ln = Layer_Norm(d_model)
 
     #def forward(self, tgt_seq, tgt_pos, src_seq, enc_outputs):
     def forward(self, tgt_seq, tgt_pos, src_seq, enc_output):
@@ -417,12 +482,15 @@ class Decoder(nn.Module):
         # (mb_size, len_q, len_k)  len_q == len_trg, len_k == len_src
         dec_slf_attns, dec_enc_attns = [], []
 
+        dec_out = self.dropout(dec_out)
         #for dec_layer, enc_output in zip(self.layer_stack, enc_outputs):
         for dec_layer in self.layer_stack:
             dec_out, dec_slf_attn, dec_enc_attn, dec_enc_one_attn = dec_layer(dec_out, enc_output,
                 trg_slf_attn_mask=trg_slf_attn_mask, trg_src_attn_mask=trg_src_attn_mask)
             dec_slf_attns += [dec_slf_attn]
             dec_enc_attns += [dec_enc_attn]
+
+        dec_out = self.ln(dec_out)
 
         return (dec_out, dec_slf_attns, dec_enc_attns, dec_enc_one_attn)
 
