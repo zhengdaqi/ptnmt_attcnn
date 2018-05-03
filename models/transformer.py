@@ -116,9 +116,8 @@ class BatchConv1d(nn.Module):
         #kernel = self.q_to_kernel(q_flat).view(batch_size * q_len, k_size, self.kernel_width)
         #bias   = self.q_to_bias  (q_flat).view(batch_size * q_len)
         kernel = self.q_to_kernel(q).view(batch_size * q_len, k_size, self.kernel_width)
-        if self.use_mask is True:
-            kernel = kernel * self.kernel_mask[None, None, :]
         bias   = self.q_to_bias  (q).view(batch_size * q_len)
+        if self.use_mask is True: kernel = kernel * self.kernel_mask[None, None, :]
         conv_res = F.conv1d(inp,
                             kernel,
                             bias=bias,
@@ -146,18 +145,22 @@ class MultiHeadAttention(nn.Module):
         assert d_model % n_head == 0, 'd_model {} divided by n_head {}.'.format(d_model, n_head)
         self.d_model, self.n_head, self.d_k, self.d_v = d_model, n_head, d_k, d_v
 
-        self.w_q = nn.Parameter(tc.FloatTensor(n_head, d_model, d_k))
-        self.w_k = nn.Parameter(tc.FloatTensor(n_head, d_model, d_k))
-        self.w_v = nn.Parameter(tc.FloatTensor(n_head, d_model, d_v))
+        #self.w_q = nn.Parameter(tc.FloatTensor(n_head, d_model, d_k))
+        #self.w_k = nn.Parameter(tc.FloatTensor(n_head, d_model, d_k))
+        #self.w_v = nn.Parameter(tc.FloatTensor(n_head, d_model, d_v))
         #self.w_q = nn.Parameter(tc.FloatTensor(n_head, d_model/n_head, d_k))
         #self.w_k = nn.Parameter(tc.FloatTensor(n_head, d_model/n_head, d_k))
         #self.w_v = nn.Parameter(tc.FloatTensor(n_head, d_model/n_head, d_v))
-        init.xavier_normal(self.w_q)
-        init.xavier_normal(self.w_k)
-        init.xavier_normal(self.w_v)
+        #init.xavier_normal(self.w_q)
+        #init.xavier_normal(self.w_k)
+        #init.xavier_normal(self.w_v)
 
-        self.temper = np.power(d_model, 0.5)
-        #self.temper = np.power(d_k, 0.5)
+        self.w_q = XavierLinear(d_model, d_model, bias=False)
+        self.w_k = XavierLinear(d_model, d_model, bias=False)
+        self.w_v = XavierLinear(d_model, d_model, bias=False)
+
+        #self.temper = np.power(d_model, 0.5)
+        self.temper = np.power(d_k, 0.5)
         self.mSoftMax = MaskSoftmax()
         self.dropout = nn.Dropout(dropout)
         self.use_attcnn = use_attcnn
@@ -183,21 +186,24 @@ class MultiHeadAttention(nn.Module):
         n_h, residual = self.n_head, q
         assert d_model_q % n_h == 0, 'd_model {} divided by n_head {}.'.format(d_model_q, n_head)
 
-        q_s = q.repeat(n_h, 1, 1).view(n_h, -1, d_model_q) # (n_head, B*L_q, d_model)
-        k_s = k.repeat(n_h, 1, 1).view(n_h, -1, d_model_k) # (n_head, B*L_k, d_model)
-        v_s = v.repeat(n_h, 1, 1).view(n_h, -1, d_model_v) # (n_head, B*L_v, d_model)
-        # (B, L_q, d_model) -> (n_h, B, L_q, d_k) -> (n_head, B*L_q, d_k)
-        #q_s = tc.stack(tc.split(q, n_h, dim=-1), dim=0).view(n_h, -1, d_model_q/n_h)
-        #k_s = tc.stack(tc.split(k, n_h, dim=-1), dim=0).view(n_h, -1, d_model_k/n_h)
-        #v_s = tc.stack(tc.split(v, n_h, dim=-1), dim=0).view(n_h, -1, d_model_v/n_h)
+        #q_s = q.repeat(n_h, 1, 1).view(n_h, -1, d_model_q) # (n_head, B*L_q, d_model)
+        #k_s = k.repeat(n_h, 1, 1).view(n_h, -1, d_model_k) # (n_head, B*L_k, d_model)
+        #v_s = v.repeat(n_h, 1, 1).view(n_h, -1, d_model_v) # (n_head, B*L_v, d_model)
 
         # n_head as batch size, multiply
-        q_s = tc.bmm(q_s, self.w_q).view(-1, L_q, self.d_k) # (B*n_head, L_q, d_k)
-        k_s = tc.bmm(k_s, self.w_k).view(-1, L_k, self.d_k) # (B*n_head, L_k, d_k)
-        v_s = tc.bmm(v_s, self.w_v).view(-1, L_v, self.d_v) # (B*n_head, L_v, d_v)
-        #q_s = tc.bmm(q_s, self.w_q).view(-1, L_q, self.d_k)
-        #k_s = tc.bmm(k_s, self.w_k).view(-1, L_k, self.d_k)
-        #v_s = tc.bmm(v_s, self.w_v).view(-1, L_v, self.d_v)
+        #q_s = tc.bmm(q_s, self.w_q).view(-1, L_q, self.d_k) # (B*n_head, L_q, d_k)
+        #k_s = tc.bmm(k_s, self.w_k).view(-1, L_k, self.d_k) # (B*n_head, L_k, d_k)
+        #v_s = tc.bmm(v_s, self.w_v).view(-1, L_v, self.d_v) # (B*n_head, L_v, d_v)
+
+        q = self.w_q(q)
+        k = self.w_k(k)
+        v = self.w_v(v)
+
+        # (B, L_q, d_model) -> n_h:[(B, L_q, d_k)] -> (n_h, B, L_q, d_k)
+        q_s = tc.stack(tc.split(q, n_h, dim=-1), dim=0).view(-1, L_q, d_k)
+        k_s = tc.stack(tc.split(k, n_h, dim=-1), dim=0).view(-1, L_k, d_k)
+        v_s = tc.stack(tc.split(v, n_h, dim=-1), dim=0).view(-1, L_v, d_v)
+
 
         '''
         q_s_r = q_s[:, :, :, None].repeat(1, 1, 1, self.kernel_width) # -> (n_head*B, L_q, L_k, kernel_width)
@@ -220,8 +226,10 @@ class MultiHeadAttention(nn.Module):
             '''
             attn = self.bconv1d(q_s, k_s) / self.temper
         else:
-            # (B*n_head, trg_L, src_L)
-            attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (B*n_head, L_q, L_k)
+            # (n_head*B, L_q, d_k) * (n_head*B, d_k, L_k)
+            attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (n_head*B, L_q, L_k)
+            # (n_head, B, L_q, d_k) * (n_head, B, d_k, L_k)
+            #attn = tc.matmul(q_s, k_s.permute(0, 1, 3, 2)) / self.temper  # (n_head, B, L_q, L_k)
 
         if attn_mask is not None:   # (B, L_q, L_k)
             attn_mask = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
@@ -237,8 +245,8 @@ class MultiHeadAttention(nn.Module):
         # one attention
         one_head_attn = attn.view(B_q, n_h, L_q, L_k)[:, 0, :, :].contiguous()
 
-        attn = self.dropout(attn)   # (B*n_head, L_q, L_k)
-        output = tc.bmm(attn, v_s)  # (B*n_head, L_q, d_v)  note: L_k == L_v
+        attn = self.dropout(attn)   # (n_head*B, L_q, L_k)
+        output = tc.bmm(attn, v_s)  # (n_head*B, L_q, d_v)  note: L_k == L_v
         # back to original batch size B
         #output = output.view(B_q, L_q, -1)  # (B_q, L_q, n_head*d_v)   can not use this !!!!
         output = tc.cat(tc.split(output, B_v, dim=0), dim=-1)
