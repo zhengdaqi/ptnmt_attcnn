@@ -200,9 +200,9 @@ class MultiHeadAttention(nn.Module):
         v = self.w_v(v)
 
         # (B, L_q, d_model) -> n_h:[(B, L_q, d_k)] -> (B, n_h, L_q, d_k) -> (n_h*B, L_q, d_k)
-        q_s = tc.stack(tc.split(q, n_h, dim=-1), dim=1).view(-1, L_q, d_k)
-        k_s = tc.stack(tc.split(k, n_h, dim=-1), dim=1).view(-1, L_k, d_k)
-        v_s = tc.stack(tc.split(v, n_h, dim=-1), dim=1).view(-1, L_v, d_v)
+        q_s = tc.stack(tc.split(q, d_model_q/n_h, dim=-1), dim=0)#.view(-1, L_q, d_k)
+        k_s = tc.stack(tc.split(k, d_model_k/n_h, dim=-1), dim=0)#.view(-1, L_k, d_k)
+        v_s = tc.stack(tc.split(v, d_model_v/n_h, dim=-1), dim=0)#.view(-1, L_v, d_v)
 
 
         '''
@@ -227,12 +227,14 @@ class MultiHeadAttention(nn.Module):
             attn = self.bconv1d(q_s, k_s) / self.temper
         else:
             # (n_head*B, L_q, d_k) * (n_head*B, d_k, L_k)
-            attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (n_head*B, L_q, L_k)
+            #attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (n_head*B, L_q, L_k)
             # (n_head, B, L_q, d_k) * (n_head, B, d_k, L_k)
-            #attn = tc.matmul(q_s, k_s.permute(0, 1, 3, 2)) / self.temper  # (n_head, B, L_q, L_k)
+            print q_s.size(), k_s.permute(0, 1, 3, 2).size()
+            attn = tc.matmul(q_s, k_s.permute(0, 1, 3, 2)) / self.temper  # (n_head, B, L_q, L_k)
 
         if attn_mask is not None:   # (B, L_q, L_k)
-            attn_mask = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
+            #attn_mask = attn_mask.repeat(n_h, 1, 1) # -> (n_head*B, L_q, L_k)
+            attn_mask = tc.stack([attn_mask for k in range(n_h)], dim=0) # -> (n_head*B, L_q, L_k)
             assert attn_mask.size() == attn.size(), 'Attention mask shape {} mismatch ' \
                     'with Attention logit tensor shape {}.'.format(attn_mask.size(), attn.size())
             attn.data.masked_fill_(attn_mask, -float('inf'))
@@ -243,13 +245,16 @@ class MultiHeadAttention(nn.Module):
         #attn = self.mSoftMax(attn, mask=attn_mask, dim=-1)
 
         # one attention
-        one_head_attn = attn.view(B_q, n_h, L_q, L_k)[:, 0, :, :].contiguous()
+        #one_head_attn = attn.view(B_q, n_h, L_q, L_k)[:, 0, :, :].contiguous()
+        one_head_attn = attn[0, :, :, :].contiguous()
 
         attn = self.dropout(attn)   # (n_head*B, L_q, L_k)
-        output = tc.bmm(attn, v_s)  # (n_head*B, L_q, d_v)  note: L_k == L_v
+        #output = tc.bmm(attn, v_s)  # (n_head*B, L_q, d_v)  note: L_k == L_v
+        output = tc.matmul(attn, v_s)  # (n_head, B, L_q, L_k)
         # back to original batch size B
         #output = output.view(B_q, L_q, -1)  # (B_q, L_q, n_head*d_v)   can not use this !!!!
-        output = tc.cat(tc.split(output, B_v, dim=0), dim=-1)
+        #output = tc.cat(tc.split(output, B_v, dim=0), dim=-1)
+        output = output.permute(1, 2, 0, 3).contiguous().view(B_q, L_q, -1)
         output = self.proj(output)          # (B_q, L_q, d_model)
 
         return output, attn, one_head_attn
