@@ -238,7 +238,7 @@ print_att = True
 #self_norm_alpha = 0.5
 self_norm_alpha = None
 #dec_gpu_id = None
-gpu_id = [3]
+gpu_id = [1]
 #gpu_id = None
 
 # Transfomer
