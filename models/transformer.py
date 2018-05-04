@@ -82,10 +82,10 @@ class BatchConv1d(nn.Module):
         self.kernel_width = kernel_width
         self.padding_width = (self.kernel_width - 1) / 2
         # (batch_size * q_len) * q_size -> (batch_size * q_len) * k_size * kernel_width
-        self.q_to_kernel = nn.Linear(q_size, k_size * self.kernel_width, bias=True).cuda()
-        self.q_to_bias = nn.Linear(q_size, 1, bias=True).cuda()
+        self.q_to_kernel = nn.Linear(q_size, k_size * self.kernel_width, bias=True)
+        self.q_to_bias = nn.Linear(q_size, 1, bias=True)
         #nn.init.xavier_normal(self.q_to_kernel.weight)
-        self.bias_b = nn.Parameter(tc.FloatTensor(1)).cuda()
+        self.bias_b = nn.Parameter(tc.FloatTensor(1))
         nn.init.normal(self.bias_b)
         #self.bias_b.fill_(0.0)
         self.use_mask = use_mask
@@ -157,10 +157,12 @@ class MultiHeadAttention(nn.Module):
         if self.use_attcnn is True:
             #self.kernel_width = 7
             self.kws = [1,1,1,1,3,3,5,7]
-            self.kernels = []
-            for kw in self.kws:
-                bconv1d = BatchConv1d(d_k, d_k, kw, use_mask=use_mask)
-                self.kernels.append(bconv1d)
+            self.kernels = nn.ModuleList(
+                [
+                    BatchConv1d(d_k, d_k, kw, use_mask=use_mask)
+                    for kw in self.kws
+                ]
+            )
             self.use_mask = use_mask
 
         self.proj = XavierLinear(d_model, d_model, bias=True)
@@ -216,8 +218,8 @@ class MultiHeadAttention(nn.Module):
             '''
             attns = list(range(n_h))
             for i in range(n_h):
-                attns[i] = self.kernels[i](q_s[i], k_s[i]).cuda()
-            attn = tc.stack(attns, dim=0) / self.temper
+                attns[i] = self.kernels[i](q_s[:, i, :, :], k_s[:, i, :, :])
+            attn = tc.stack(attns, dim=1) / self.temper
 
         else:
             q_s = q_s / self.temper
