@@ -229,7 +229,6 @@ class MultiHeadAttention(nn.Module):
             # (n_head*B, L_q, d_k) * (n_head*B, d_k, L_k)
             #attn = tc.bmm(q_s, k_s.permute(0, 2, 1)) / self.temper  # (n_head*B, L_q, L_k)
             # (n_head, B, L_q, d_k) * (n_head, B, d_k, L_k)
-            print q_s.size(), k_s.permute(0, 1, 3, 2).size()
             attn = tc.matmul(q_s, k_s.permute(0, 1, 3, 2)) / self.temper  # (n_head, B, L_q, L_k)
 
         if attn_mask is not None:   # (B, L_q, L_k)
