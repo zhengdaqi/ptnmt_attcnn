@@ -248,7 +248,7 @@ d_k=64  # d_v == d_model // n_head
 d_v=64
 d_model=512     # == n_head*d_v
 d_word_vec=512
-d_inner_hid=512
+d_inner_hid=1024
 n_layers=1
 n_head=8
 warmup_steps=8000
