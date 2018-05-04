@@ -102,7 +102,9 @@ def main():
             d_inner_hid=wargs.d_inner_hid,
             n_layers=wargs.n_layers,
             n_head=wargs.n_head,
-            dropout=wargs.drop_rate)
+            dropout=wargs.drop_rate,
+            use_attcnn=wargs.use_attcnn
+        )
 
         def get_criterion(vocab_size):
             weight = tc.ones(vocab_size)

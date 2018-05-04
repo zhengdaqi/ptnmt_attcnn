@@ -71,7 +71,9 @@ class Input(object):
                 offset = max_len_batch - length if right_align else 0
                 # modify Tensor pad_batch
                 pad_batch[idx].narrow(0, offset, length).copy_(batch[idx])
-                pos_pad_batch[idx].narrow(0, offset, length).copy_(tc.arange(1, length+1))
+                #pos_pad_batch[idx].narrow(0, offset, length).copy_(tc.arange(1, length+1))
+                pos_pad_batch[idx].narrow(0, offset, length).copy_(
+                    tc.arange(0, length).fmod(wargs.max_seq_len) + 1)   # fit transformer
 
             pad_batch_for_files.append(pad_batch)
             lens_for_files.append(lens)

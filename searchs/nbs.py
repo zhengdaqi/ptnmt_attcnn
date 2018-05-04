@@ -49,7 +49,7 @@ class Nbs(object):
 
         self.maxL = y_mask.size(0) if self.batch_sample is True else 2 * self.srcL
         # get initial state of decoder rnn and encoder context
-        self.s0, self.enc_src0, self.uh0 = self.model.init(x_LB, xs_mask=x_mask, test=True)
+        self.s0, self.emb_src0, self.enc_src0, self.uh0 = self.model.init(x_LB, xs_mask=x_mask, test=True)
         # (1, trg_nhids), (src_len, 1, src_nhids*2)
         init_beam(self.beam, cnt=self.maxL, s0=self.s0)
 
@@ -127,7 +127,7 @@ class Nbs(object):
             s_im1 = tc.stack(s_im1)
 
             debug(y_im1)
-            step_output = self.decoder.step(s_im1, enc_src, uh, y_im1)
+            step_output = self.decoder.step(s_im1, self.emb_src0, enc_src, uh, y_im1)
             a_i, s_i, y_im1, alpha_ij = step_output[:4]
             # (n_remainings*p, enc_hid_size), (n_remainings*p, dec_hid_size),
             # (n_remainings*p, trg_wemb_size), (x_maxL, n_remainings*p)
